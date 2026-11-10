@@ -529,7 +529,7 @@
         </button>
       </div>
       <div class="mini-row" id="miniRow" aria-hidden="true"></div>
-      <div class="fineprint">מונה הנרות נשמר בדפדפן זה.</div>
+      <div class="fineprint" id="noteCandle">מונה הנרות נשמר בדפדפן זה.</div>
     </div>
   </div>
 </section>
@@ -608,7 +608,7 @@
       <label class="field">
         <span>תוכן ההקדשה</span>
         <textarea class="input" id="tMsg" maxlength="1200" placeholder="כתבו כאן את דבריכם לזכרו…" required></textarea>
-        <div class="counter-hint"><span>ההקדשות נשמרות בדפדפן זה</span><span id="tCount">0 / 1200</span></div>
+        <div class="counter-hint"><span id="noteTrib">ההקדשות נשמרות בדפדפן זה</span><span id="tCount">0 / 1200</span></div>
       </label>
       <div class="err" id="tErr" role="alert"></div>
       <button class="btn solid" type="submit">שליחת הקדשה</button>
@@ -633,7 +633,7 @@
     <div class="f-title">לעילוי נשמת יוסי מזאי ז״ל</div>
     <div class="f-sub">יהי זכרו ברוך</div>
     <div class="ornament" style="margin:22px auto 0"><i></i></div>
-    <div class="f-note">הדלקת הנרות, ההקדשות ותכני הגלריה שמועלים נשמרים בדפדפן ובמכשיר שבהם נעשתה הפעולה.</div>
+    <div class="f-note" id="noteFooter">הדלקת הנרות, ההקדשות ותכני הגלריה שמועלים נשמרים בדפדפן ובמכשיר שבהם נעשתה הפעולה.</div>
     <div class="f-note" id="adminState"></div>
   </div>
 </footer>
@@ -741,6 +741,34 @@ const CONFIG = {
   // גודל מרבי לסרטון שמועלה לגלריה (מגה-בייט)
   maxVideoMB: 80
 };
+</script>
+
+<!-- ======================= FIREBASE (Firestore + Storage) ======================= -->
+<!-- Firebase App (הליבה) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<!-- Firestore (לשמירת הקדשות ומונה הנרות) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<!-- Storage (לשמירת תמונות וסרטונים) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-storage-compat.js"></script>
+
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyA0J1kgaLEWsKZkwIneYh9q35yPW4yjr2E",
+    authDomain: "memorial-site-9fb29.firebaseapp.com",
+    projectId: "memorial-site-9fb29",
+    storageBucket: "memorial-site-9fb29.firebasestorage.app",
+    messagingSenderId: "29761607257",
+    appId: "1:29761607257:web:1953f87804bd756ccfc348",
+    measurementId: "G-R3DJGNCY4M"
+  };
+
+  // If Firebase cannot be loaded (offline / blocked) the site falls back to browser-only storage.
+  let fbDb = null, fbStorage = null;
+  try {
+    firebase.initializeApp(firebaseConfig);
+    fbDb = firebase.firestore();
+    fbStorage = firebase.storage();
+  } catch (e) { console.warn('Firebase unavailable – using local storage only', e); }
 </script>
 
 <!-- ======================= APP ======================= -->
@@ -987,6 +1015,15 @@ const CONFIG = {
     tryPlay();
   }
 
+  /* ---------- cloud status notes ---------- */
+  const cloudOK = { candles: false, tributes: false, gallery: false };
+  function markCloud(k) {
+    cloudOK[k] = true;
+    if (cloudOK.candles) $('#noteCandle').textContent = 'מונה הנרות משותף לכל המבקרים.';
+    if (cloudOK.tributes) $('#noteTrib').textContent = 'ההקדשות נשמרות ומוצגות לכל המבקרים';
+    if (cloudOK.candles && cloudOK.tributes && cloudOK.gallery) $('#noteFooter').textContent = 'ההקדשות, הנרות ותכני הגלריה שמועלים נשמרים בענן ומוצגים לכל המבקרים.';
+  }
+
   /* ---------- candle ---------- */
   let candles = parseInt(ls.get(KEYS.candles, 0), 10) || 0;
   const stage = $('#candleStage'), countEl = $('#candleCount'), msgEl = $('#candleMsg'), miniRow = $('#miniRow');
@@ -1011,19 +1048,32 @@ const CONFIG = {
       stage.appendChild(e); setTimeout(() => e.remove(), 3600);
     }
   }
+  let candleCloud = !!fbDb, candleSeen = false;
+  function showCount(n, animate) {
+    candles = n; countEl.textContent = fmtNum(n);
+    if (animate) { countEl.classList.remove('bump'); void countEl.offsetWidth; countEl.classList.add('bump'); }
+    renderMini();
+  }
+  function localLight() { candles++; ls.set(KEYS.candles, candles); showCount(candles, true); }
   let lastLight = 0;
   $('#lightBtn').addEventListener('click', () => {
     const now = Date.now(); if (now - lastLight < 1200) return; lastLight = now;
-    candles++; ls.set(KEYS.candles, candles);
-    countEl.textContent = fmtNum(candles);
-    countEl.classList.remove('bump'); void countEl.offsetWidth; countEl.classList.add('bump');
     stage.classList.add('lit'); spawnEmbers();
-    if (candles <= MAX_MINI) addMini(candles - 1);
     msgEl.classList.add('show');
     toast('נר נשמה הודלק לעילוי נשמתו');
+    if (candleCloud) {
+      fbDb.collection('counters').doc('candles')
+        .set({ count: firebase.firestore.FieldValue.increment(1) }, { merge: true })
+        .catch(e => { console.warn(e); candleCloud = false; localLight(); });
+    } else localLight();
   });
-  countEl.textContent = fmtNum(candles);
-  renderMini();
+  showCount(candles, false);
+  if (candleCloud) {
+    fbDb.collection('counters').doc('candles').onSnapshot(doc => {
+      const n = doc.exists ? (Number(doc.data().count) || 0) : 0;
+      showCount(n, candleSeen && n > candles); candleSeen = true; markCloud('candles');
+    }, err => { console.warn(err); candleCloud = false; });
+  }
 
   /* ---------- file reading ---------- */
   function readFile(file, mode, onProgress) {
@@ -1052,12 +1102,49 @@ const CONFIG = {
   }
 
   /* ---------- gallery ---------- */
-  let uploaded = [];
+  let uploaded = [], localUploaded = [], cloudUploaded = [];
+  function rebuildUploaded() { uploaded = localUploaded.concat(cloudUploaded); }
+  let galleryCloud = !!(fbDb && fbStorage);
   const grid = $('#grid');
   function hydrate(r) {
     return { id: r.id, type: r.type, ts: r.ts, caption: r.caption || '',
       src: r.type === 'video' ? URL.createObjectURL(r.blob) : r.src, uploaded: true };
   }
+  function dataUrlToBlob(u) {
+    const parts = u.split(','), mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+    const bin = atob(parts[1]), arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+  async function uploadCloud(f, caption, onProgress) {
+    const isImg = /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic)$/i.test(f.name);
+    let blob, contentType, ext;
+    if (isImg) {
+      const dataUrl = await readFile(f, 'dataURL');
+      blob = dataUrlToBlob(await shrinkImage(dataUrl)); contentType = 'image/jpeg'; ext = '.jpg';
+    } else {
+      if (f.size > CONFIG.maxVideoMB * 1024 * 1024) throw new Error('הסרטון גדול מ-' + CONFIG.maxVideoMB + 'MB');
+      blob = f; contentType = f.type || 'video/mp4'; ext = (f.name.match(/\.[a-z0-9]+$/i) || ['.mp4'])[0].toLowerCase();
+    }
+    const path = 'gallery/' + makeId('up') + ext;
+    const ref = fbStorage.ref(path);
+    const task = ref.put(blob, { contentType });
+    await new Promise((res, rej) => task.on('state_changed', s => { if (onProgress && s.totalBytes) onProgress(s.bytesTransferred / s.totalBytes); }, rej, res));
+    const url = await ref.getDownloadURL();
+    await fbDb.collection('gallery').add({ type: isImg ? 'image' : 'video', url, path, caption, name: f.name, ts: firebase.firestore.FieldValue.serverTimestamp() });
+  }
+  function listenGallery() {
+    if (!galleryCloud) return;
+    fbDb.collection('gallery').orderBy('ts', 'asc').onSnapshot(snap => {
+      cloudUploaded = snap.docs.map(d => {
+        const x = d.data({ serverTimestamps: 'estimate' });
+        return { id: d.id, type: x.type === 'video' ? 'video' : 'image', ts: x.ts && x.ts.toMillis ? x.ts.toMillis() : Date.now(),
+          caption: x.caption || '', src: x.url, path: x.path, uploaded: true, cloud: true };
+      }).filter(x => x.src);
+      rebuildUploaded(); renderGrid(); markCloud('gallery');
+    }, err => { console.warn(err); if (!cloudOK.gallery) galleryCloud = false; });
+  }
+
   const fixedItems = HISTORY.map((h, i) => ({ id: 'hist-' + i, type: 'image', src: h.src, caption: h.caption || '', hist: true }))
     .concat(SEED_PHOTOS.map((src, i) => ({ id: 'seed-' + i, type: 'image', src, caption: '' })));
   function allItems() { return fixedItems.filter(x => !x.failed).concat(uploaded); }
@@ -1090,8 +1177,14 @@ const CONFIG = {
         d.addEventListener('click', async ev => {
           ev.stopPropagation();
           if (!confirm('למחוק פריט זה מהגלריה?')) return;
+          if (it.cloud) {
+            try { await fbDb.collection('gallery').doc(it.id).delete(); }
+            catch (e) { console.warn(e); toast('המחיקה נכשלה – אפשר למחוק במסוף Firebase'); return; }
+            try { if (it.path) await fbStorage.ref(it.path).delete(); } catch (e) {}
+            toast('הפריט הוסר מהגלריה'); return;
+          }
           try { await DB.del(it.id); } catch (e) {}
-          uploaded = uploaded.filter(u => u.id !== it.id); renderGrid(); toast('הפריט הוסר מהגלריה');
+          localUploaded = localUploaded.filter(u => u.id !== it.id); rebuildUploaded(); renderGrid(); toast('הפריט הוסר מהגלריה');
         });
         fig.appendChild(d);
       }
@@ -1117,11 +1210,15 @@ const CONFIG = {
     if (!unlocked || !pending.length) return;
     const files = pending.slice(), caption = $('#capInput').value.trim();
     uploadBtn.disabled = true; bar.hidden = false; const fill = $('i', bar); fill.style.width = '0';
-    const failed = []; let ok = 0, firstNewId = null;
+    const failed = []; let ok = 0, firstNewId = null, cloudAdded = false;
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
       statusEl.textContent = 'מעלה ' + (i + 1) + ' מתוך ' + files.length + '…';
       try {
+        if (galleryCloud) {
+          await uploadCloud(f, caption, p => { fill.style.width = ((i + p) / files.length * 100) + '%'; });
+          ok++; cloudAdded = true; continue;
+        }
         const id = makeId('up'), ts = Date.now();
         let item;
         if (/^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic)$/i.test(f.name)) {
@@ -1136,7 +1233,7 @@ const CONFIG = {
           try { await DB.put(item); }
           catch (e) { storageOK = false; toast('האחסון בדפדפן אינו זמין – הפריטים יישמרו עד לרענון הדף'); }
         }
-        uploaded.push(hydrate(item)); ok++; if (!firstNewId) firstNewId = id;
+        localUploaded.push(hydrate(item)); rebuildUploaded(); ok++; if (!firstNewId) firstNewId = id;
       } catch (e) { failed.push(f.name + ' – ' + (e && e.message ? e.message : 'שגיאה')); }
       fill.style.width = ((i + 1) / files.length * 100) + '%';
     }
@@ -1152,6 +1249,7 @@ const CONFIG = {
       toast('נוספו ' + ok + ' פריטים לגלריה');
       const el = grid.querySelector('[data-id="' + firstNewId + '"]');
       if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150);
+      else if (cloudAdded) setTimeout(() => { const last = grid.lastElementChild; if (last) last.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 1500);
     }
   });
 
@@ -1202,24 +1300,29 @@ const CONFIG = {
   }, { passive: true });
 
   /* ---------- tributes ---------- */
-  let tributes = ls.get(KEYS.tributes, []);
-  if (!Array.isArray(tributes)) tributes = [];
+  function readLocalTributes() { const v = ls.get(KEYS.tributes, []); return Array.isArray(v) ? v : []; }
+  let tributesCloud = !!fbDb, tributesLoaded = false, knownIds = null;
+  let tributes = tributesCloud ? [] : readLocalTributes();
   const tList = $('#tributes'), tForm = $('#tributeForm'), tName = $('#tName'), tMsg = $('#tMsg'), tErr = $('#tErr');
   const ICON_BOOK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v15H6a2 2 0 0 0-2 2z"/><path d="M4 19V5.5M9 8h6"/></svg>';
   function fmtDate(ts) {
     try { return new Date(ts).toLocaleString('he-IL', { dateStyle: 'long', timeStyle: 'short' }); }
     catch (e) { return new Date(ts).toLocaleString(); }
   }
-  function renderTributes(newId) {
+  function renderTributes() {
     tList.innerHTML = '';
+    if (tributesCloud && !tributesLoaded) {
+      const d = document.createElement('div'); d.className = 'empty'; d.textContent = 'טוען הקדשות…'; tList.appendChild(d); return;
+    }
     if (!tributes.length) {
       const d = document.createElement('div'); d.className = 'empty';
       d.innerHTML = ICON_BOOK + '<div>הספר עדיין ריק.</div><div style="font-size:.95rem">היו הראשונים לכתוב מילה לזכרו.</div>';
-      tList.appendChild(d); return;
+      tList.appendChild(d); knownIds = new Set(); return;
     }
+    const prev = knownIds; knownIds = new Set(tributes.map(t => t.id));
     tributes.forEach(t => {
       const a = document.createElement('article'); a.className = 'tribute';
-      if (t.id !== newId) a.style.animation = 'none';
+      if (!(prev && !prev.has(t.id))) a.style.animation = 'none';
       const who = document.createElement('div'); who.className = 'who';
       const av = document.createElement('div'); av.className = 'avatar'; av.textContent = (t.name || '?').trim().charAt(0);
       const meta = document.createElement('div');
@@ -1228,25 +1331,56 @@ const CONFIG = {
       meta.appendChild(nm); meta.appendChild(tm); who.appendChild(av); who.appendChild(meta);
       const p = document.createElement('p'); p.textContent = t.message;
       const del = document.createElement('button'); del.type = 'button'; del.className = 'del'; del.textContent = 'מחיקה';
-      del.addEventListener('click', () => {
+      del.addEventListener('click', async () => {
         if (!confirm('למחוק הקדשה זו?')) return;
+        if (t.cloud) {
+          try { await fbDb.collection('tributes').doc(t.id).delete(); toast('ההקדשה נמחקה'); }
+          catch (e) { console.warn(e); toast('המחיקה נכשלה – אפשר למחוק הקדשות במסוף Firebase'); }
+          return;
+        }
         tributes = tributes.filter(x => x.id !== t.id); ls.set(KEYS.tributes, tributes); renderTributes();
       });
       a.appendChild(del); a.appendChild(who); a.appendChild(p); tList.appendChild(a);
     });
   }
+  function fallbackTributes() {
+    tributesCloud = false; tributes = readLocalTributes(); renderTributes();
+    toast('לא ניתן להתחבר לענן – ההקדשות יישמרו בדפדפן זה בלבד');
+  }
+  function listenTributes() {
+    if (!tributesCloud) return;
+    fbDb.collection('tributes').orderBy('ts', 'desc').onSnapshot(snap => {
+      tributes = snap.docs.map(d => {
+        const x = d.data({ serverTimestamps: 'estimate' });
+        return { id: d.id, name: String(x.name || ''), message: String(x.message || ''),
+          ts: x.ts && x.ts.toMillis ? x.ts.toMillis() : Date.now(), cloud: true };
+      });
+      tributesLoaded = true; renderTributes(); markCloud('tributes');
+    }, err => { console.warn(err); if (!tributesLoaded) fallbackTributes(); });
+  }
   tMsg.addEventListener('input', () => { $('#tCount').textContent = tMsg.value.length + ' / ' + tMsg.maxLength; });
-  tForm.addEventListener('submit', e => {
+  tForm.addEventListener('submit', async e => {
     e.preventDefault();
     const name = tName.value.trim().replace(/\s+/g, ' '), message = tMsg.value.trim();
     if (!name || !message) { tErr.textContent = 'יש למלא שם ותוכן הקדשה.'; return; }
     tErr.textContent = '';
+    if (tributesCloud) {
+      const btn = $('button[type=submit]', tForm); btn.disabled = true;
+      try {
+        const write = fbDb.collection('tributes').add({ name, message, ts: firebase.firestore.FieldValue.serverTimestamp() });
+        await Promise.race([write, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))]);
+        toast('תודה, ההקדשה נוספה לספר');
+        tForm.reset(); $('#tCount').textContent = '0 / ' + tMsg.maxLength;
+        tList.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (err) { console.warn(err); tErr.textContent = 'שליחת ההקדשה נכשלה. בדקו את החיבור ונסו שוב.'; }
+      btn.disabled = false; return;
+    }
     const entry = { id: makeId('t'), name, message, ts: Date.now() };
     tributes.unshift(entry);
     if (!ls.set(KEYS.tributes, tributes)) { toast('לא ניתן לשמור בדפדפן זה – ההקדשה תוצג עד לרענון הדף'); }
     else toast('תודה, ההקדשה נוספה לספר');
     tForm.reset(); $('#tCount').textContent = '0 / ' + tMsg.maxLength;
-    renderTributes(entry.id);
+    renderTributes();
     tList.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
@@ -1277,12 +1411,15 @@ const CONFIG = {
     renderTributes();
     try {
       const rows = await DB.all();
-      uploaded = rows.sort((a, b) => a.ts - b.ts).map(hydrate);
-    } catch (e) { storageOK = false; uploaded = []; }
+      localUploaded = rows.sort((a, b) => a.ts - b.ts).map(hydrate);
+    } catch (e) { storageOK = false; localUploaded = []; }
+    rebuildUploaded();
     renderGrid();
     route();
     initAudio();
     initGiscus();
+    listenTributes();
+    listenGallery();
   }
   init();
 })();
